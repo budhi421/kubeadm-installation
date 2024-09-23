@@ -1,0 +1,123 @@
+KUBEADM installation in controlPlane
+-----------------------------------------
+-----------------------------------------
+
+
+#!/bin/bash
+sudo apt update -y
+
+# Install transport layer
+sudo apt-get install -y apt-transport-https curl
+
+# Add Kubernetes Signing Key
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.28/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+# Add Software Repositories
+echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.29/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
+
+sudo apt update -y 
+
+sudo su -
+
+# Install and configure the CRI-O container runtime
+OS=xUbuntu_22.04
+VERSION=1.22
+
+echo "deb https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/stable/$OS/ /" > /etc/apt/sources.list.d/devel:kubic:libcontainers:stable.list
+echo "deb http://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/stable:/cri-o:/$VERSION/$OS/ /" > /etc/apt/sources.list.d/devel:kubic:libcontainers:stable:cri-o:$VERSION.list
+
+curl -L https://download.opensuse.org/repositories/devel:kubic:libcontainers:stable:cri-o:$VERSION/$OS/Release.key | apt-key add -
+curl -L https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/stable/$OS/Release.key | apt-key add -
+
+exit
+
+sudo apt update -y
+sudo apt install cri-o cri-o-runc -y
+
+sudo systemctl daemon-reload
+sudo systemctl enable crio --now
+
+# Check to see CRI-O is installed properly
+apt-cache policy cri-o
+
+# Turn off swap
+sudo swapoff -a
+
+# sysctl settings and ip tables
+sudo modprobe overlay
+sudo modprobe br_netfilter
+
+sudo tee /etc/sysctl.d/kubernetes.conf<<EOF
+net.bridge.bridge-nf-call-ip6tables = 1
+net.bridge.bridge-nf-call-iptables = 1
+net.ipv4.ip_forward = 1
+EOF
+
+sudo sysctl --system
+
+# Install and configure Kubeadm with the latest version of Kubernetes.
+sudo apt-get install -y kubelet kubeadm kubectl
+
+# To install a specific version of Kubernetes (not the latest), you can use the following...
+# Example: sudo apt-get install -qy kubelet=1.25.5-00 kubectl=1.25.5-00 kubeadm=1.25.5-00
+
+# You can see all Kubernetes versions available for Kubeadm like this: `apt list -a kubeadm`
+
+sudo apt-get install -qy kubelet=<version> kubectl=<version> kubeadm=<version>
+
+sudo apt-mark hold kubelet kubeadm kubectl
+
+
+
+
+
+
+# Define variables for the `kubeadm init` command. Examples below.
+sudo su -
+
+user=k8stest
+pass='Password12!@'
+sudo useradd -m -d /home/$user $user
+sudo echo "$user:$pass" | chpasswd
+usermod -aG sudo $user
+
+exit
+
+
+#######
+Depending on where you are deploying, you could either have just a public subnet, or a public and private subnet
+If you have just a public subnet, use the same value for the ip_address and publicIP, along with the CIDR range
+If you have a private and public subnet, use the public IP for the publicIP, the private IP for the ip_address, and the private IP range for the CIDR
+#######
+ip_address=192.168.29.120
+cidr=192.168.0.0/16
+publicIP=192.168.29.120
+
+sudo kubeadm init --control-plane-endpoint $publicIP --apiserver-advertise-address $ip_address --pod-network-cidr=$cidr --upload-certs
+
+#######
+
+If you are deploying in the cloud, you may find yourself in a situation where the init fails because the Kubelet connect communicate with the API server
+
+This typically happens in public clouds due to network restrictions
+
+If it happens to you, open up the following ports: https://kubernetes.io/docs/reference/ports-and-protocols/
+
+#######
+
+# To start using your Kubernetes cluster, you need to configure your home user settings
+su -l k8stest
+mkdir -p $HOME/.kube
+sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+sudo chown $(id -u):$(id -g) $HOME/.kube/config
+
+# Networking: Weave
+# If you don't want to use Weave, you can see the network frameworks listed here: https://kubernetes.io/docs/concepts/cluster-administration/addons/
+kubectl apply -f https://github.com/weaveworks/weave/releases/download/v2.8.1/weave-daemonset-k8s.yaml
+
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+
+
+# How to remove taint:
+linux@ubuntu-server:~$ kubectl taint node ubuntu-server node-role.kubernetes.io/control-plane:NoSchedule-
